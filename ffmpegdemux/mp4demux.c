@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <libavformat/avformat.h>
+#include <libavcodec/avcodec.h>
 
 int main(int argc, char **argv) {
     AVFormatContext *pFormatCtx = NULL;
@@ -37,19 +38,37 @@ int main(int argc, char **argv) {
         return -1;
     }
 
+
+    /**
     AVPacket packet;
+    FILE *video_dump = fopen("video_dump.h264", "wb"); // 비디오 덤프 파일 열기
+    FILE *audio_dump = fopen("audio_dump.aac", "wb");  // 오디오 덤프 파일 열기
+    */
+
     while (av_read_frame(pFormatCtx, &packet) >= 0) {
         if (packet.stream_index == video_stream_index) {
             // 비디오 패킷 처리
-            printf("Video packet, size: %d\n", packet.size);
+            //fwrite(packet.data, 1, packet.size, video_dump); // 비디오 데이터 파일에 쓰기
+            //av_pkt_dump2 (video_dump, &packet, 1, pFormatCtx->streams[video_stream_index]);
+            //av_hex_dump (video_dump, packet.data, packet.size);
+            //av_interleaved_write_frame (pFormatCtx, &packet); // segment fault - muxer에 사용
+            //av_write_frame (pFormatCtx, &packet); // segment fault - muxer에 사용
+            //av_dump_format(pFormatCtx, 0, argv[1], 0); // output 파일 X meta data 출력
+            
+            
+            
         } else if (packet.stream_index == audio_stream_index) {
             // 오디오 패킷 처리
-            printf("Audio packet, size: %d\n", packet.size);
+            //fwrite(packet.data, 1, packet.size, audio_dump); // 오디오 데이터 파일에 쓰기
+            //av_pkt_dump2 (audio_dump, &packet, 1, pFormatCtx->streams[audio_stream_index]);
+            //av_hex_dump (audio_dump, packet.data, packet.size);
         }
         av_packet_unref(&packet);
     }
 
-    // 메모리 정리 및 파일 닫기
+    // 파일과 메모리 정리
+    fclose(video_dump);
+    fclose(audio_dump);
     avformat_close_input(&pFormatCtx);
 
     return 0;
