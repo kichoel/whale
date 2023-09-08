@@ -7,19 +7,22 @@
 // 디코딩 된 데이터 출력
 // data[0]의 linesize[0]만큼만 출력함.. yuv 중 y만 출력함.
 // u,v는 data[1], data[2]에 linesize[1], linesize[2]만큼 들어 있음
-static void pgm_save(unsigned char *buf, int wrap, int xsize, int ysize, const char *filename) {
+static void pgm_save(unsigned char *buf, int wrap, int xsize, int ysize,
+                     char *filename)
+{
+    FILE *f;
     int i;
-    filename = "video_dump.h264";
-    FILE *video_dump = fopen("video_dump.h264", "w");
-// x,y의 사이즈와 255 숫자를 파일에 출력
-// yuv 플레이어를 위한 값 같지만, 해당 플레이어를 사용하지 않으면 굳이 출력할 필요 없음
-    fprintf(video_dump, "P5\n%d %d\n%d\n", xsize, ysize, 255);
+    f = fopen(filename,"w");
+    // x,y의 사이즈와 255 숫자를 파일에 출력
+    // yuv 플레이어를 위한 값 같지만, 해당 플레이어를 사용하지 않으면
+    // 굳이 출력할 필요 없음
+    fprintf(f, "P5\n%d %d\n%d\n", xsize, ysize, 255);
 
-//디코딩된 데이터 출력 , wrap 사이즈 만큼 건너뛰며
-// xsize 만큼 출력 함
+    //디코딩된 데이터 출력 , wrap 사이즈 만큼 건너뛰며
+    // xsize 만큼 출력 함
     for (i = 0; i < ysize; i++)
-        fwrite(buf + i * wrap, 1, xsize, video_dump);
-    fclose(video_dump);                        
+        fwrite(buf + i * wrap, 1, xsize, f);
+    fclose(f);
 }
 
 
@@ -28,8 +31,9 @@ static void decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *packet, co
     int ret;
 
     // 디코딩 명령 수행
-    ret = avcodec_send_packet(dec_ctx, packet); //*************************
-                
+    ret = avcodec_send_packet(dec_ctx, packet); /** The AVCodecContext MUST have been opened with avcodec_open2() 
+                                                    before packets may be fed to the decoder. */
+                                                //
     if (ret < 0) {
         fprintf(stderr, "Error sending a packet for decoding\n");
         exit(1);
@@ -37,20 +41,21 @@ static void decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *packet, co
                 
     while (ret >= 0) {
         // 디코딩 된 데이터 획득
-        ret = avcodec_receive_frame(dec_ctx, frame); //***********************
+        ret = avcodec_receive_frame(dec_ctx, frame);
         if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
             return;
         else if (ret < 0) {
             fprintf(stderr, "Error during decoding\n");
             exit(1);
         }
-        printf("saving frame %4d\n", dec_ctx->frame_number); //********************
+        printf("saving frame %4d\n", dec_ctx->frame_number); 
         fflush(stdout);
 
         // the picture is allocated by the decoder. no need to free it
-        snprintf(buf, sizeof(buf), "%s-%d", filename, dec_ctx->frame_number); //***************************
+        snprintf(buf, sizeof(buf), "%s-%d", filename, dec_ctx->frame_number);
 
-        pgm_save(frame->data[0], frame->linesize[0], frame->width, frame->height, buf);
+        pgm_save(frame->data[0], frame->linesize[0],
+                 frame->width, frame->height, buf);  
     }
 }
 
@@ -58,6 +63,7 @@ static void decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *packet, co
 int main(int argc, char **argv) {
     AVFormatContext *pFormatCtx = NULL;
     AVCodecContext *pCodecCtx= NULL;
+    AVStream *video_stream = NULL;
 
     AVPacket packet;
     AVFrame *frame;
@@ -78,6 +84,7 @@ int main(int argc, char **argv) {
 
     // FFmpeg 초기화
     av_register_all();
+    // 디코딩을 위해 모든 코덱 등록
     avcodec_register_all();
 
     // 파일 열기
@@ -113,7 +120,29 @@ int main(int argc, char **argv) {
 
     pCodecCtx = avcodec_alloc_context3(pCodecVideo);
 
-    while (av_read_frame(pFormatCtx, &packet) >= 0) {
+    video_stream = pFormatCtx->streams[video_stream_index];
+
+    if (video_stream->codecpar->extradata_size > 0) {
+
+        pCodecCtx->extradata = av_mallocz(video_stream->codecpar->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
+
+        if (!pCodecCtx->extradata) {
+
+            fprintf(stderr, "Could not allocate extradata\n");
+
+            exit(1);
+
+        }
+
+        memcpy(pCodecCtx->extradata, video_stream->codecpar->extradata, video_stream->codecpar->extradata_size);
+
+        pCodecCtx->extradata_size = video_stream->codecpar->extradata_size;
+
+    }
+
+    avcodec_open2(pCodecCtx, pCodecVideo, NULL); // 코덱 열기
+
+    while (av_read_frame(pFormatCtx, &packet) >= 0 ) {
         if (packet.stream_index == video_stream_index) {
             // 비디오 패킷 처리
             //fwrite(packet.data, 1, packet.size, video_dump); // 비디오 데이터 파일에 쓰기
@@ -126,7 +155,7 @@ int main(int argc, char **argv) {
 
             //Todo
             // Do Video decode
-            decode(pCodecCtx, frame, &packet, "video_dump_");
+           decode(pCodecCtx, frame, &packet, "video_dump_");
             
         } else if (packet.stream_index == audio_stream_index) {
             // 오디오 패킷 처리
