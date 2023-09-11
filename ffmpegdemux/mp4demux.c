@@ -4,15 +4,12 @@
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 
-// 디코딩 된 데이터 출력
-// data[0]의 linesize[0]만큼만 출력함.. yuv 중 y만 출력함.
-// u,v는 data[1], data[2]에 linesize[1], linesize[2]만큼 들어 있음
 static void pgm_save(unsigned char *buf, int wrap, int xsize, int ysize,
                      char *filename)
 {
     FILE *f;
     int i;
-    f = fopen(filename,"w");
+    f = fopen(filename,"a");
     // x,y의 사이즈와 255 숫자를 파일에 출력
     // yuv 플레이어를 위한 값 같지만, 해당 플레이어를 사용하지 않으면
     // 굳이 출력할 필요 없음
@@ -21,19 +18,17 @@ static void pgm_save(unsigned char *buf, int wrap, int xsize, int ysize,
     //디코딩된 데이터 출력 , wrap 사이즈 만큼 건너뛰며
     // xsize 만큼 출력 함
     for (i = 0; i < ysize; i++)
-        fwrite(buf + i * wrap, 1, xsize, f);
+        fwrite(buf + (i * wrap), 1, xsize, f);
     fclose(f);
 }
 
-
 static void decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *packet, const char *filename) {
-    char buf[1024];
+    char buf[3024];
     int ret;
 
     // 디코딩 명령 수행
     ret = avcodec_send_packet(dec_ctx, packet); /** The AVCodecContext MUST have been opened with avcodec_open2() 
                                                     before packets may be fed to the decoder. */
-                                                //
     if (ret < 0) {
         fprintf(stderr, "Error sending a packet for decoding\n");
         exit(1);
@@ -42,6 +37,7 @@ static void decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *packet, co
     while (ret >= 0) {
         // 디코딩 된 데이터 획득
         ret = avcodec_receive_frame(dec_ctx, frame);
+
         if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
             return;
         else if (ret < 0) {
@@ -54,11 +50,16 @@ static void decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *packet, co
         // the picture is allocated by the decoder. no need to free it
         snprintf(buf, sizeof(buf), "%s-%d", filename, dec_ctx->frame_number);
 
-        pgm_save(frame->data[0], frame->linesize[0],
-                 frame->width, frame->height, buf);  
+        // 디코딩 된 데이터 출력
+        // data[0]의 linesize[0]만큼만 출력함.. yuv 중 y만 출력함.
+        // u,v는 data[1], data[2]에 linesize[1], linesize[2]만큼 들어 있음
+        pgm_save(frame->data[0], frame->linesize[0], frame->width, frame->height, buf);
+        pgm_save(frame->data[1], frame->linesize[1], frame->width, frame->height, buf );
+        pgm_save(frame->data[2], frame->linesize[2], frame->width, frame->height, buf );
+        //printf("frame->linesize[0] : %d, frame->linesize[1] : %d, frame->linesize[2] : %d\n",
+        //frame->linesize[0],frame->linesize[1],frame->linesize[2]);
     }
 }
-
 
 int main(int argc, char **argv) {
     AVFormatContext *pFormatCtx = NULL;
@@ -67,6 +68,7 @@ int main(int argc, char **argv) {
 
     AVPacket packet;
     AVFrame *frame;
+    //SwsContext* swsCtx;
 
     const AVCodec *pCodecVideo;
     const AVCodec *pCodecAudio;
@@ -121,6 +123,13 @@ int main(int argc, char **argv) {
     pCodecCtx = avcodec_alloc_context3(pCodecVideo);
 
     video_stream = pFormatCtx->streams[video_stream_index];
+
+    avcodec_parameters_to_context(pCodecCtx, video_stream->codecpar);
+
+    /*
+    swsCtx = sws_getContext (int frame.width, int frame.height, AVPixelFormat(frame.Format), int frame.width, int frame.height, 
+                            AV_PIX_FMT_YUV420P, SWS_BICUBIC, NULL, NULL, NULL);
+                            */
 
     if (video_stream->codecpar->extradata_size > 0) {
 
