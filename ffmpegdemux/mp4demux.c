@@ -3,7 +3,7 @@
 #include <string.h>
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
-
+/*
 static void pgm_save(unsigned char *buf, int wrap, int xsize, int ysize,
                      char *filename)
 {
@@ -19,6 +19,39 @@ static void pgm_save(unsigned char *buf, int wrap, int xsize, int ysize,
     // xsize 만큼 출력 함
     for (i = 0; i < ysize; i++)
         fwrite(buf + (i * wrap), 1, xsize, f);
+    fclose(f);
+}
+*/
+
+static void yuv_save(unsigned char *y, int y_wrap, 
+                     unsigned char *u, int u_wrap, 
+                     unsigned char *v, int v_wrap, 
+                     int xsize, int ysize, char *filename) 
+{
+    FILE *f;
+    int i;
+
+    f = fopen(filename, "wb");
+    if (!f) {
+        fprintf(stderr, "Could not open %s\n", filename);
+        exit(1);
+    }
+
+    // Y 데이터 저장
+    for (i = 0; i < ysize; i++) {
+        fwrite(y + i * y_wrap, 1, xsize, f);
+    }
+
+    // U 데이터 저장
+    for (i = 0; i < ysize / 2; i++) {
+        fwrite(u + i * u_wrap, 1, xsize / 2, f);
+    }
+
+    // V 데이터 저장
+    for (i = 0; i < ysize / 2; i++) {
+        fwrite(v + i * v_wrap, 1, xsize / 2, f);
+    }
+
     fclose(f);
 }
 
@@ -53,17 +86,28 @@ static void decode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *packet, co
         // 디코딩 된 데이터 출력
         // data[0]의 linesize[0]만큼만 출력함.. yuv 중 y만 출력함.
         // u,v는 data[1], data[2]에 linesize[1], linesize[2]만큼 들어 있음
-        pgm_save(frame->data[0], frame->linesize[0], frame->width, frame->height, buf);
-        pgm_save(frame->data[1], frame->linesize[1], frame->width, frame->height, buf );
-        pgm_save(frame->data[2], frame->linesize[2], frame->width, frame->height, buf );
+        //pgm_save(frame->data[0], frame->linesize[0], frame->width, frame->height, buf);
+        //pgm_save(frame->data[1], frame->linesize[1], frame->width, frame->height, buf +  frame->linesize[0]);
+        //pgm_save(frame->data[2], frame->linesize[2], frame->width, frame->height, buf +  frame->linesize[0] + frame->linesize[1]);
         //printf("frame->linesize[0] : %d, frame->linesize[1] : %d, frame->linesize[2] : %d\n",
         //frame->linesize[0],frame->linesize[1],frame->linesize[2]);
+        yuv_save(frame->data[0], frame->linesize[0], 
+         frame->data[1], frame->linesize[1], 
+         frame->data[2], frame->linesize[2], 
+         frame->width, frame->height, buf);
     }
 }
+/*
+static void Adecode(AVCodecContext *dec_ctx, AVFrame *frame, AVPacket *packet, const char *filename) {
+    
+
+}
+*/
 
 int main(int argc, char **argv) {
     AVFormatContext *pFormatCtx = NULL;
-    AVCodecContext *pCodecCtx= NULL;
+    AVCodecContext *pCodecCtx = NULL;
+    //AVCodecContext *pAudioCodecCtx = NULL;
     AVStream *video_stream = NULL;
 
     AVPacket packet;
@@ -71,7 +115,7 @@ int main(int argc, char **argv) {
     //SwsContext* swsCtx;
 
     const AVCodec *pCodecVideo;
-    const AVCodec *pCodecAudio;
+    //const AVCodec *pCodecAudio;
     
     FILE *video_dump = fopen("video_dump.h264", "wb"); // 비디오 덤프 파일 열기
     FILE *audio_dump = fopen("audio_dump.aac", "wb");  // 오디오 덤프 파일 열기
@@ -86,6 +130,8 @@ int main(int argc, char **argv) {
 
     // FFmpeg 초기화
     av_register_all();
+    // 네트워크 열기. 공식 문서에는 있는것이 좋음
+    avformat_network_all();
     // 디코딩을 위해 모든 코덱 등록
     avcodec_register_all();
 
@@ -119,17 +165,15 @@ int main(int argc, char **argv) {
     }
 
     pCodecVideo = avcodec_find_decoder(pFormatCtx->streams[video_stream_index]->codecpar->codec_id);
+    //pCodecAudio = avcodec_find_decoder(pFormatCtx->streams[audio_stream_index]->codecpar->codec_id);
 
     pCodecCtx = avcodec_alloc_context3(pCodecVideo);
+    //pAudioCodecCtx = avcodec_alloc_context3(pCodecAudio);
 
     video_stream = pFormatCtx->streams[video_stream_index];
+    //audio_stream = pFormatCtx->streams[audio_stream_index];
 
     avcodec_parameters_to_context(pCodecCtx, video_stream->codecpar);
-
-    /*
-    swsCtx = sws_getContext (int frame.width, int frame.height, AVPixelFormat(frame.Format), int frame.width, int frame.height, 
-                            AV_PIX_FMT_YUV420P, SWS_BICUBIC, NULL, NULL, NULL);
-                            */
 
     if (video_stream->codecpar->extradata_size > 0) {
 
@@ -149,7 +193,9 @@ int main(int argc, char **argv) {
 
     }
 
-    avcodec_open2(pCodecCtx, pCodecVideo, NULL); // 코덱 열기
+    avcodec_open2(pCodecCtx, pCodecVideo, NULL); // 비디오 코덱 열기
+    avcodec_open2(pCodecCtx, pCodecAudio, NULL); // 오디오 코덱 열기
+    
 
     while (av_read_frame(pFormatCtx, &packet) >= 0 ) {
         if (packet.stream_index == video_stream_index) {
@@ -160,10 +206,7 @@ int main(int argc, char **argv) {
             //av_interleaved_write_frame (pFormatCtx, &packet); // segment fault - muxer에 사용
             //av_write_frame (pFormatCtx, &packet); // segment fault - muxer에 사용
             //av_dump_format(pFormatCtx, 0, argv[1], 0); // output 파일 X meta data 출력
-            
-
-            //Todo
-            // Do Video decode
+        
            decode(pCodecCtx, frame, &packet, "video_dump_");
             
         } else if (packet.stream_index == audio_stream_index) {
@@ -171,6 +214,10 @@ int main(int argc, char **argv) {
             //fwrite(packet.data, 1, packet.size, audio_dump); // 오디오 데이터 파일에 쓰기
             //av_pkt_dump2 (audio_dump, &packet, 1, pFormatCtx->streams[audio_stream_index]);
             //av_hex_dump (audio_dump, packet.data, packet.size);
+
+            
+
+
         }
     }
 
