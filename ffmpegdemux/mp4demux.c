@@ -5,6 +5,7 @@
 #include <libavcodec/avcodec.h>
 
 static FILE *pVideo_dump = NULL;
+static FILE *pAudio_dump = NULL;
 
 static void yuv_save(unsigned char *pY, int y_wrap, 
                      unsigned char *pU, int u_wrap, 
@@ -31,44 +32,77 @@ static void yuv_save(unsigned char *pY, int y_wrap,
     }
 }
 
-static void v_decode(AVCodecContext *pDec_ctx, AVFrame *pFrame, AVPacket *pPacket) {
+static void V_decode(AVCodecContext *pVDec_ctx, AVFrame *pVFrame, AVPacket *pPacket) {
     int ret;
 
     // 디코딩 명령 수행. avcodec_open2()으로 AVCodecContext 열려있어야 함
-    ret = avcodec_send_packet(pDec_ctx, pPacket);
+    ret = avcodec_send_packet(pVDec_ctx, pPacket);
     if (ret < 0) {
-        fprintf(stderr, "Error sending a packet for decoding\n");
+        fprintf(stderr, "Error sending a packet for video decoding\n");
         exit(1);
     }
-                
+
     while (ret >= 0) {
-        ret = avcodec_receive_frame(pDec_ctx, pFrame); // 디코딩 된 데이터 획득
+        ret = avcodec_receive_frame(pVDec_ctx, pVFrame); // 디코딩 된 데이터 획득
 
         if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
             return;
         else if (ret < 0) {
-            fprintf(stderr, "Error during decoding\n");
+            fprintf(stderr, "Error during video decoding\n");
             exit(1);
         }
-        printf("saving frame %4d\n", pDec_ctx->frame_number); 
-        fflush(stdout); // 출력 버퍼 비움
+        fflush(stdout); // 표준 출력 버퍼 비움
 
-        // 디코딩 된 데이터 출력
-        yuv_save(pFrame->data[0], pFrame->linesize[0], 
-         pFrame->data[1], pFrame->linesize[1], 
-         pFrame->data[2], pFrame->linesize[2], 
-         pFrame->width, pFrame->height);
+        // 디코딩 된 데이터 저장
+        yuv_save(pVFrame->data[0], pVFrame->linesize[0], 
+         pVFrame->data[1], pVFrame->linesize[1],
+         pVFrame->data[2], pVFrame->linesize[2],
+         pVFrame->width, pVFrame->height);
+    }
+}
+
+static void A_decode(AVCodecContext *pADec_ctx, AVFrame *pAFrame, AVPacket *pPacket) {
+    int i, ch;
+    int Adata_size, ret ;
+
+    ret = avcodec_send_packet(pADec_ctx, pPacket);
+    if (ret < 0) {
+        fprintf(stderr, "Error sending a packet for audio decoding\n");
+        exit(1);
+    }
+
+    while (ret >= 0) {
+        ret = avcodec_receive_frame(pADec_ctx, pAFrame);
+
+        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+            return;
+        else if (ret < 0) {
+            fprintf(stderr, "Error during audio decoding\n");
+            exit(1);
+        }
+    }
+
+    Adata_size = av_get_bytes_per_sample(pADec_ctx->sample_fmt);
+
+    for(i = 0 ; i < pAFrame->nb_samples ; i++) {
+        for (ch = 0 ; pADec_ctx->ch_layout.nb_channels ; ch++) {
+            fwrite(pAFrame->data[ch] + Adata_size*i, 1, Adata_size, pAudio_dump);
+        }
     }
 }
 
 int main(int argc, char **argv) {
-    const AVCodec *pCodecVideo;
+    const AVCodec *pVideoCodec;
+    const AVCodec *pAudioCodec;
 
     AVFormatContext *pFormatCtx = NULL;
-    AVCodecContext *pCodecCtx = NULL;
+    AVCodecContext *pVCodecCtx = NULL;
+    AVCodecContext *pACodecCtx = NULL;
     AVStream *video_stream = NULL;
+    AVStream *audio_stream = NULL;
     AVPacket packet;
-    AVFrame *pFrame;
+    AVFrame *pVFrame;
+    AVFrame *pAFrame;
 
     int video_stream_index = -1;
     int audio_stream_index = -1;
@@ -107,50 +141,67 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    pFrame = av_frame_alloc();  // AVFrame 크기의 메모리 할당
-    if (!pFrame) {
+    pVFrame = av_frame_alloc();  // AVFrame 크기의 메모리 할당
+    if (!pVFrame) {
         fprintf(stderr, "Could not allocate video frame\n");
         exit(1);
     }
 
-    pCodecVideo = avcodec_find_decoder(pFormatCtx->streams[video_stream_index]->codecpar->codec_id);    // 비디오 코덱 찾기
-    pCodecCtx = avcodec_alloc_context3(pCodecVideo);
+    pAFrame = av_frame_alloc();
+    if (!pAFrame) {
+        fprintf(stderr, "Could not allocate audio frame\n");
+        exit(1);
+    }
+
+    pVideoCodec = avcodec_find_decoder(pFormatCtx->streams[video_stream_index]->codecpar->codec_id);    // 비디오 코덱 찾기
+    pAudioCodec = avcodec_find_decoder(pFormatCtx->streams[audio_stream_index]->codecpar->codec_id);    // 오디오 코덱 찾기
+    pVCodecCtx = avcodec_alloc_context3(pVideoCodec);
+    pACodecCtx = avcodec_alloc_context3(pAudioCodec);
     video_stream = pFormatCtx->streams[video_stream_index];
+    audio_stream = pFormatCtx->streams[audio_stream_index];
 
     // 동영상 파일 정보를 Ctx에 복사하고 없는 정보는 코덱 정보로 유지
-    avcodec_parameters_to_context(pCodecCtx, video_stream->codecpar);
+    avcodec_parameters_to_context(pVCodecCtx, video_stream->codecpar);
+    avcodec_parameters_to_context(pACodecCtx, audio_stream->codecpar);
 
+    // extra data 복사
     if (video_stream->codecpar->extradata_size > 0) {
-        pCodecCtx->extradata = av_mallocz(video_stream->codecpar->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
+        pVCodecCtx->extradata = av_mallocz(video_stream->codecpar->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
 
-        if (!pCodecCtx->extradata) {
-            fprintf(stderr, "Could not allocate extradata\n");
+        if (!pVCodecCtx->extradata) {
+            fprintf(stderr, "Could not allocate video extradata\n");
             exit(1);
         }
 
         // 메모리 값 복사. 1 복사받을 메모리 포인터, 2 복사할 메모리 포인터, 3 복사할 값의 길이 (byte)
-        memcpy(pCodecCtx->extradata, video_stream->codecpar->extradata, video_stream->codecpar->extradata_size);
-        pCodecCtx->extradata_size = video_stream->codecpar->extradata_size;
+        memcpy(pVCodecCtx->extradata, video_stream->codecpar->extradata, video_stream->codecpar->extradata_size);
+        pVCodecCtx->extradata_size = video_stream->codecpar->extradata_size;
     }
 
-    avcodec_open2(pCodecCtx, pCodecVideo, NULL); // 비디오 코덱 열기
+    avcodec_open2(pVCodecCtx, pVideoCodec, NULL); // 비디오 코덱 열기
+    avcodec_open2(pACodecCtx, pAudioCodec, NULL); // 오디오 코덱 열기
     
     pVideo_dump = fopen("video_dump.yuv", "wb");
+    pAudio_dump = fopen("audio_dump.pcm", "wb");
 
     while (av_read_frame(pFormatCtx, &packet) >= 0 ) {
         if (packet.stream_index == video_stream_index) {
             // 비디오 패킷 처리        
-            v_decode(pCodecCtx, pFrame, &packet);
+            V_decode(pVCodecCtx, pVFrame, &packet);
 
         } else if (packet.stream_index == audio_stream_index) {
             // 오디오 패킷 처리
+            A_decode(pACodecCtx, pAFrame, &packet);
         }
     }
 
     // 파일과 메모리 정리
     fclose(pVideo_dump);
+    fclose(pAudio_dump);
     avformat_close_input(&pFormatCtx);
-    avcodec_free_context(&pCodecCtx);
-    av_frame_free(&pFrame);
+    avcodec_free_context(&pVCodecCtx);
+    avcodec_free_context(&pACodecCtx);
+    av_frame_free(&pVFrame);
+    av_frame_free(&pAFrame);
     return 0;
 }
