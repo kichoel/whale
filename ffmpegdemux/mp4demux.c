@@ -90,9 +90,6 @@ static void A_decode(AVCodecContext *pADec_ctx, AVFrame *pAFrame, AVPacket *pPac
              exit(1);
         }
 
-        //printf("data:%d\n",pAFrame->data[0]);
-        printf("sample format: %s\n", av_get_sample_fmt_name(pADec_ctx->sample_fmt));
-
         for (int i = 0; i < pAFrame->nb_samples; i++) {
             for (int ch = 0; ch < pADec_ctx->channels; ch++) {
                 fwrite(pAFrame->data[ch] + Adata_size * i, 1, Adata_size, pAudio_dump);
@@ -151,8 +148,6 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    //packet = *av_packet_alloc();
-
     pVFrame = av_frame_alloc();  // AVFrame 크기의 메모리 할당
     if (!pVFrame) {
         fprintf(stderr, "Could not allocate video frame\n");
@@ -189,20 +184,6 @@ int main(int argc, char **argv) {
         memcpy(pVCodecCtx->extradata, video_stream->codecpar->extradata, video_stream->codecpar->extradata_size);
         pVCodecCtx->extradata_size = video_stream->codecpar->extradata_size;
     }
-    /**
-    if (audio_stream->codecpar->extradata_size > 0) {
-        pACodecCtx->extradata = av_mallocz(audio_stream->codecpar->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
-
-        if (!pACodecCtx->extradata) {
-            fprintf(stderr, "Could not allocate video extradata\n");
-            exit(1);
-        }
-
-        // 메모리 값 복사. 1 복사받을 메모리 포인터, 2 복사할 메모리 포인터, 3 복사할 값의 길이 (byte)
-        memcpy(pACodecCtx->extradata, audio_stream->codecpar->extradata, audio_stream->codecpar->extradata_size);
-        pACodecCtx->extradata_size = audio_stream->codecpar->extradata_size;
-    }
-    */
 
     avcodec_open2(pVCodecCtx, pVideoCodec, NULL); // 비디오 코덱 열기
     avcodec_open2(pACodecCtx, pAudioCodec, NULL); // 오디오 코덱 열기
@@ -229,6 +210,5 @@ int main(int argc, char **argv) {
     avcodec_free_context(&pACodecCtx);
     av_frame_free(&pVFrame);
     av_frame_free(&pAFrame);
-    //av_packet_free(&packet);
     return 0;
 }
